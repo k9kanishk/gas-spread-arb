@@ -45,8 +45,5 @@ Normalization steps:
    streamlit run src/app.py
    ```
 
-## Strategy Talking Points (Interviews)
-- Motivated by cross-market price linkage between European hubs and Asian LNG benchmarks; highlights basis convergence/divergence dynamics.
-- Combines financial engineering (currency/unit normalization) with time-series modeling (AR(1), half-life) and systematic trading rules (z-score thresholds).
-- Shows full research loop: data cleaning, model estimation, parameter interpretation (mean/half-life), backtesting with costs, and visualization via notebooks/Streamlit.
+
 
