@@ -1,0 +1,9 @@
+click
+matplotlib
+numpy
+pandas
+pydantic
+scipy
+statsmodels
+streamlit
+yfinance
