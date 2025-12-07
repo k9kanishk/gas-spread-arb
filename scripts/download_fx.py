@@ -1,19 +1,17 @@
+# scripts/download_fx.py
+from pathlib import Path
 import pandas as pd
 import yfinance as yf
-from pathlib import Path
 
-# Make sure raw data folder exists
 raw_dir = Path("data/raw")
 raw_dir.mkdir(parents=True, exist_ok=True)
 
-# Download FX
 tickers = ["EURUSD=X", "GBPUSD=X"]
 fx = yf.download(tickers, start="2015-01-01")["Adj Close"]
 
-# Rename columns
 fx.columns = ["EURUSD", "GBPUSD"]
+fx.index.name = "Date"   # IMPORTANT so data_loader can do index_col="Date"
 
-# Save to CSV
 out_path = raw_dir / "fx_rates.csv"
 fx.to_csv(out_path)
 
