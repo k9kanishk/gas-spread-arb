@@ -24,6 +24,23 @@ RAW_DATA_DIR = Path("data") / "raw"
 PROCESSED_DATA_DIR = Path("data") / "processed"
 
 
+def _read_with_date_index(path: Path, dayfirst: bool = True) -> pd.DataFrame:
+    """Read a CSV and force-parse a 'Date' column into a clean DatetimeIndex."""
+    if not path.exists():
+        raise FileNotFoundError(f"Expected CSV not found: {path}")
+
+    df = pd.read_csv(path)
+
+    if "Date" not in df.columns:
+        raise ValueError(f"{path} must contain a 'Date' column. Found columns: {list(df.columns)}")
+
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce", dayfirst=dayfirst)
+    df = df.dropna(subset=["Date"]).set_index("Date")
+    df = df[~df.index.duplicated(keep="first")].sort_index()
+
+    return df
+
+
 def _load_price_series(path: Path, target_name: str, expected_price_column: str = "Price") -> pd.Series:
     """Load a single price series from ``path`` and return it as a ``pd.Series``.
 
@@ -43,10 +60,7 @@ def _load_price_series(path: Path, target_name: str, expected_price_column: str 
         ValueError: If no suitable price column can be identified.
     """
 
-    if not path.exists():
-        raise FileNotFoundError(f"Expected CSV not found: {path}")
-
-    df = pd.read_csv(path, parse_dates=True, index_col="Date")
+    df = _read_with_date_index(path, dayfirst=True)
 
     price_column = expected_price_column if expected_price_column in df.columns else None
     if price_column is None:
@@ -78,12 +92,10 @@ def load_raw_prices() -> pd.DataFrame:
     jkm = _load_price_series(RAW_DATA_DIR / "jkm_prices.csv", target_name="JKM")
 
     fx_path = RAW_DATA_DIR / "fx_rates.csv"
-    if not fx_path.exists():
-        raise FileNotFoundError(f"Expected FX CSV not found: {fx_path}")
-    fx = pd.read_csv(fx_path, parse_dates=True, index_col="Date")
+    fx = _read_with_date_index(fx_path, dayfirst=True)
     if not {"EURUSD", "GBPUSD"}.issubset(fx.columns):
         raise ValueError("fx_rates.csv must contain 'EURUSD' and 'GBPUSD' columns")
-    fx = fx[["EURUSD", "GBPUSD"]].sort_index()
+    fx = fx[["EURUSD", "GBPUSD"]]
 
     combined = pd.concat([ttf, nbp, jkm, fx], axis=1, join="outer").sort_index()
     filled = combined.ffill()
