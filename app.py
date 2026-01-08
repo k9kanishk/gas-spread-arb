@@ -5,7 +5,6 @@ from pathlib import Path
 import altair as alt
 import pandas as pd
 import streamlit as st
-import yfinance as yf
 
 from src.backtester import backtest_spread
 from src.data_loader import load_raw_prices, save_clean_prices
@@ -14,35 +13,21 @@ from src.models import fit_ar1, half_life
 from src.signals import generate_signal
 from src.spreads import build_spreads, normalize_to_eur_mwh
 
-RAW_DIR = Path("data") / "raw"
 PROCESSED_DIR = Path("data") / "processed"
-
-
-def ensure_fx_data(start_date: str = "2015-01-01") -> Path:
-    """Ensure data/raw/fx_rates.csv exists; download if needed."""
-
-    fx_path = RAW_DIR / "fx_rates.csv"
-    if fx_path.exists():
-        return fx_path
-
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
-
-    tickers = ["EURUSD=X", "GBPUSD=X"]
-    fx = yf.download(tickers, start=start_date)["Adj Close"]
-    fx.columns = ["EURUSD", "GBPUSD"]
-    fx.index.name = "Date"
-    fx.to_csv(fx_path)
-
-    return fx_path
 
 
 @st.cache_data(show_spinner=False)
 def load_pipeline(shipping_cost: float = 3.0) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run the full data pipeline used by the app."""
-
-    ensure_fx_data()
-
-    raw_df = load_raw_prices()
+    try:
+        raw_df = load_raw_prices()
+    except FileNotFoundError as exc:
+        st.error(str(exc))
+        st.info(
+            "Fix: create data/raw/fx_rates.csv with columns: Date, EURUSD, GBPUSD "
+            "(USD per 1 EUR, USD per 1 GBP)."
+        )
+        st.stop()
     save_clean_prices(raw_df)
 
     normalized = normalize_to_eur_mwh(raw_df)
@@ -155,6 +140,6 @@ metrics_table = summarize_backtest(backtest, name=selected_spread)
 st.dataframe(metrics_table.to_frame("Value"), use_container_width=True)
 
 st.caption(
-    "Data is prepared from raw CSVs in `data/raw` (with FX downloaded if missing) and cached for fast reloads. "
+    "Data is prepared from raw CSVs in `data/raw` and cached for fast reloads. "
     "Adjust the sidebar to explore different thresholds and costs."
 )
