@@ -5,31 +5,53 @@ from pathlib import Path
 import altair as alt
 import pandas as pd
 import streamlit as st
+import yfinance as yf
 
 from src.backtester import backtest_spread
+from src.data_loader import load_raw_prices, save_clean_prices
 from src.metrics import summarize_backtest
 from src.models import fit_ar1, half_life
 from src.signals import generate_signal
-from src.spreads import build_spreads
+from src.spreads import build_spreads, normalize_to_eur_mwh
 
-DATA_DIR = Path("data") / "processed"
+RAW_DIR = Path("data") / "raw"
+PROCESSED_DIR = Path("data") / "processed"
+
+
+def ensure_fx_data(start_date: str = "2015-01-01") -> Path:
+    """Ensure data/raw/fx_rates.csv exists; download if needed."""
+
+    fx_path = RAW_DIR / "fx_rates.csv"
+    if fx_path.exists():
+        return fx_path
+
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
+
+    tickers = ["EURUSD=X", "GBPUSD=X"]
+    fx = yf.download(tickers, start=start_date)["Adj Close"]
+    fx.columns = ["EURUSD", "GBPUSD"]
+    fx.index.name = "Date"
+    fx.to_csv(fx_path)
+
+    return fx_path
 
 
 @st.cache_data(show_spinner=False)
-def load_processed_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Load cleaned prices, normalized prices, and spreads from disk."""
+def load_pipeline(shipping_cost: float = 3.0) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Run the full data pipeline used by the app."""
 
-    clean_prices = pd.read_csv(DATA_DIR / "clean_prices.csv", parse_dates=["Date"], index_col="Date")
-    normalized = pd.read_csv(DATA_DIR / "normalized_prices.csv", parse_dates=["Date"], index_col="Date")
-    spreads = pd.read_csv(DATA_DIR / "spreads.csv", parse_dates=["Date"], index_col="Date")
-    return clean_prices, normalized, spreads
+    ensure_fx_data()
 
+    raw_df = load_raw_prices()
+    save_clean_prices(raw_df)
 
-@st.cache_data(show_spinner=False)
-def compute_spreads(normalized: pd.DataFrame, shipping_cost: float) -> pd.DataFrame:
-    """Recompute spreads to reflect the chosen shipping cost."""
+    normalized = normalize_to_eur_mwh(raw_df)
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    normalized.to_csv(PROCESSED_DIR / "normalized_prices.csv")
 
-    return build_spreads(normalized, shipping_cost=shipping_cost)
+    spreads = build_spreads(normalized, shipping_cost=shipping_cost)
+    spreads.to_csv(PROCESSED_DIR / "spreads.csv")
+    return raw_df, normalized, spreads
 
 
 def format_parameters(params: dict) -> pd.DataFrame:
@@ -58,8 +80,6 @@ st.markdown(
     """
 )
 
-clean_prices, normalized_prices, base_spreads = load_processed_data()
-
 with st.sidebar:
     st.header("Controls")
     selected_spread = st.selectbox("Spread", options=["TTF_NBP", "TTF_JKM_netback"], index=0)
@@ -81,9 +101,7 @@ with st.sidebar:
         step=0.01,
     )
 
-spreads = compute_spreads(normalized_prices, shipping_cost=shipping_cost)
-if "TTF_NBP" not in spreads or "TTF_JKM_netback" not in spreads:
-    spreads = base_spreads
+_clean_prices, normalized_prices, spreads = load_pipeline(shipping_cost=shipping_cost)
 
 spread_series = spreads[selected_spread].dropna()
 
@@ -137,5 +155,6 @@ metrics_table = summarize_backtest(backtest, name=selected_spread)
 st.dataframe(metrics_table.to_frame("Value"), use_container_width=True)
 
 st.caption(
-    "Data loaded from processed CSVs in `data/processed`. Adjust the sidebar to explore different thresholds and costs."
+    "Data is prepared from raw CSVs in `data/raw` (with FX downloaded if missing) and cached for fast reloads. "
+    "Adjust the sidebar to explore different thresholds and costs."
 )
