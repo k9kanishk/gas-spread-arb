@@ -69,3 +69,42 @@ def fit_ar1(spread: pd.Series) -> dict:
         "sigma": sigma,
         "model": model,
     }
+
+
+def rolling_ar1_params(spread: pd.Series, lookback: int = 252) -> pd.DataFrame:
+    """Compute rolling AR(1) parameters using a fixed lookback window.
+
+    Args:
+        spread: Time series of spread levels.
+        lookback: Number of historical observations to use for each fit.
+
+    Returns:
+        DataFrame with columns ``const``, ``phi``, ``mu``, and ``sigma`` aligned
+        to the input index. Values are NaN until enough history is available.
+    """
+
+    cleaned = spread.dropna()
+    params = pd.DataFrame(index=cleaned.index, columns=["const", "phi", "mu", "sigma"], dtype=float)
+
+    values = cleaned.to_numpy()
+    for idx in range(lookback, len(cleaned)):
+        window = values[idx - lookback : idx]
+        if len(window) < 2:
+            continue
+
+        x = window[:-1]
+        y = window[1:]
+        var_x = np.var(x, ddof=0)
+        if var_x == 0:
+            continue
+
+        cov_xy = np.mean((x - x.mean()) * (y - y.mean()))
+        phi = cov_xy / var_x
+        const = float(y.mean() - phi * x.mean())
+        mu = const / (1 - phi) if phi != 1 else np.nan
+        residuals = y - (const + phi * x)
+        sigma = float(np.std(residuals, ddof=0))
+
+        params.iloc[idx] = [const, phi, mu, sigma]
+
+    return params.reindex(spread.index)
