@@ -68,3 +68,32 @@ def generate_signal(
 
     signal_series = pd.Series(positions, index=spread.index)
     return signal_series, zscores
+
+
+def signal_from_zscores(
+    zscores: pd.Series,
+    entry_z: float = 2.0,
+    exit_z: float = 0.5,
+) -> pd.Series:
+    """Generate trading signals directly from a z-score series."""
+
+    positions: list[int] = []
+    current_pos = 0
+
+    for z in zscores:
+        if np.isnan(z):
+            positions.append(current_pos)
+            continue
+
+        if current_pos == 0:
+            if z > entry_z:
+                current_pos = -1
+            elif z < -entry_z:
+                current_pos = 1
+        else:
+            if abs(z) < exit_z:
+                current_pos = 0
+
+        positions.append(current_pos)
+
+    return pd.Series(positions, index=zscores.index)
