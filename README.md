@@ -218,11 +218,7 @@ Add realistic tradable legs (futures curves, roll schedules).
 
 Add cross-validation / more robust walk-forward evaluation.
 
-Interview-ready summary
-“I built a cross-market spread analytics dashboard for TTF–NBP and TTF–JKM netbacks.
-I normalized prices into a common currency/unit using FX and energy conversions, modeled each spread as a mean-reverting AR(1) process, generated z-score convergence signals, and evaluated performance under train/test and rolling walk-forward regimes with transaction costs.”
 
 Disclaimer
 This project is for educational and research purposes only and does not constitute investment advice.
 
-If you want, I can also write a **short “Project write-up”** section for your portfolio website (3–6 bullets + 1 paragraph) that matches how recruiters skim.
