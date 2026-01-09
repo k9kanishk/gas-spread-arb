@@ -40,33 +40,30 @@ def fit_ar1(series: pd.Series) -> dict:
         standard deviation), and ``half_life_days``.
     """
 
-    cleaned = series.dropna().astype(float)
-    if len(cleaned) < 2:
-        raise ValueError("At least two observations are required to fit AR(1) after dropping NaNs.")
-
-    x = cleaned.shift(1).dropna()
-    y = cleaned.loc[x.index]
+    s = series.dropna().astype(float)
+    x = s.shift(1).dropna()
+    y = s.loc[x.index]
 
     x_mean, y_mean = x.mean(), y.mean()
     phi = ((x - x_mean) * (y - y_mean)).sum() / ((x - x_mean) ** 2).sum()
-    constant = y_mean - phi * x_mean
+    c = y_mean - phi * x_mean
 
-    resid = y - (constant + phi * x)
+    resid = y - (c + phi * x)
     sigma_eps = resid.std(ddof=1)
 
-    mu = constant / (1 - phi) if abs(1 - phi) > 1e-12 else np.nan
-    denom = max(1e-12, 1 - phi**2)
-    sigma_x = sigma_eps / np.sqrt(denom)
+    mu = c / (1 - phi) if abs(1 - phi) > 1e-12 else np.nan
 
-    half_life_days = (-np.log(2) / np.log(abs(phi))) if 0 < abs(phi) < 1 else np.nan
+    sigma_x = sigma_eps / np.sqrt(max(1e-12, 1 - phi**2))
+
+    half_life = (-np.log(2) / np.log(abs(phi))) if 0 < abs(phi) < 1 else np.nan
 
     return {
-        "constant": constant,
-        "phi": phi,
-        "mu": mu,
+        "constant": c,
+        "phi": float(phi),
+        "mu": float(mu) if np.isfinite(mu) else np.nan,
         "sigma_eps": float(sigma_eps),
         "sigma_x": float(sigma_x),
-        "half_life_days": float(half_life_days),
+        "half_life_days": float(half_life) if np.isfinite(half_life) else np.nan,
     }
 
 
