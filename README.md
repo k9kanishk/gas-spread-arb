@@ -25,35 +25,37 @@ FX inputs (static CSV):
 - `EURUSD` = USD per 1 EUR
 - `GBPUSD` = USD per 1 GBP
 
-### 2) Spread construction
+## 2) Spread construction
+
 Two main spreads are analyzed:
 
-**(A) TTF–NBP hub spread**
-\[
-S_{TTF,NBP}(t) = TTF_{EUR/MWh}(t) - NBP_{EUR/MWh}(t)
-\]
+**(A) TTF–NBP hub spread (both in EUR/MWh)**  
+S_TTF_NBP(t) = TTF_EURMWh(t) − NBP_EURMWh(t)
 
-**(B) TTF–JKM netback spread**
-A simplified cross-basin proxy:
-\[
-S_{TTF,JKM}(t) = JKM_{EUR/MWh}(t) - \text{Shipping}(t) - TTF_{EUR/MWh}(t)
-\]
+**(B) TTF–JKM netback spread (simplified cross-basin proxy, EUR/MWh)**  
+S_TTF_JKM_netback(t) = JKM_EURMWh(t) − Shipping_EURMWh(t) − TTF_EURMWh(t)
 
-> Note: shipping is implemented as a user-controlled constant in EUR/MWh (a proxy).
+> Note: `Shipping_EURMWh(t)` is implemented as a user-controlled **constant** (proxy).  
+> A constant shipping assumption shifts the spread level but does not materially change Δspread-based PnL.
 
-### 3) Mean reversion modeling
-Each spread is modeled as a mean-reverting process via an **AR(1)** approximation:
+---
 
-\[
-x_t = c + \phi x_{t-1} + \varepsilon_t
-\]
+## 3) Mean reversion modeling
+
+Each spread is modeled using an AR(1) approximation:
+
+x_t = c + phi * x_(t−1) + eps_t
+
+Where:
+- `phi` measures persistence (mean reversion if |phi| < 1)
+- `c` is the intercept
+- `eps_t` is the innovation (residual)
 
 The dashboard reports:
-- φ (persistence)
-- long-run mean μ
-- residual volatility (σₑ)
-- **stationary volatility** (σₓ) used for z-scores
-- half-life (days)
+- phi, long-run mean (mu), residual sigma (sigma_eps)
+- stationary sigma (sigma_x), used for z-scores
+- implied half-life (days)
+
 
 ### 4) Signal generation (z-score rules)
 A simple threshold strategy:
