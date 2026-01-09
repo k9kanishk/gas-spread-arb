@@ -45,11 +45,12 @@ def format_parameters(params: dict) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "Value": {
-                "Constant": params["const"],
+                "Constant": params["constant"],
                 "Phi": params["phi"],
                 "Long-run mean": params["mu"],
-                "Residual sigma": params["sigma"],
-                "Half-life (days)": half_life(params["phi"]),
+                "Residual sigma (σₑ)": params["sigma_eps"],
+                "Stationary sigma (σₓ)": params["sigma_x"],
+                "Half-life (days)": params["half_life_days"],
             }
         }
     )
@@ -64,6 +65,66 @@ def holding_periods(position: pd.Series) -> pd.Series:
 
     groups = active.ne(active.shift()).cumsum()
     return active.groupby(groups).size()
+
+
+@st.cache_data(show_spinner=False)
+def run_one_config(
+    spread_key: str,
+    mode: str,
+    entry_z: float,
+    exit_z: float,
+    shipping_cost: float,
+    refit_model: bool,
+    train_end: pd.Timestamp | None,
+    lookback: int,
+    transaction_cost: float,
+    per_leg_cost: float,
+    normalized_prices: pd.DataFrame,
+) -> pd.Series | None:
+    """Run one parameter sweep configuration and return performance metrics."""
+
+    spreads = build_spreads(normalized_prices, shipping_cost=shipping_cost)
+    selected_series = spreads[spread_key].dropna()
+
+    if spread_key == "TTF_JKM_netback" and not refit_model:
+        baseline_spreads = build_spreads(normalized_prices, shipping_cost=BASELINE_SHIPPING)
+        model_series = baseline_spreads[spread_key].dropna()
+    else:
+        model_series = selected_series
+
+    if mode == "Train/Test (fixed params)":
+        if train_end is None:
+            return None
+        train = model_series.loc[:train_end]
+        test = selected_series.loc[train_end:]
+        if train.empty or test.empty:
+            return None
+        ar1_params = fit_ar1(train)
+        signal, _ = generate_signal(
+            spread=test,
+            mu=ar1_params["mu"],
+            sigma=ar1_params["sigma_x"],
+            entry_z=entry_z,
+            exit_z=exit_z,
+        )
+        spread_for_backtest = test
+    else:
+        rolling_params = rolling_ar1_params(model_series, lookback=lookback)
+        if rolling_params.dropna().empty:
+            return None
+        mu_series = rolling_params["mu"]
+        sigma_series = rolling_params["sigma_x"]
+        zscores = (selected_series - mu_series) / sigma_series
+        signal = signal_from_zscores(zscores, entry_z=entry_z, exit_z=exit_z)
+        spread_for_backtest = selected_series
+
+    bt = backtest_spread(
+        spread_for_backtest,
+        signal,
+        cost_per_turnover=transaction_cost,
+        per_leg_cost=per_leg_cost,
+    )
+    return summarize_backtest(bt, name=f"{entry_z}/{exit_z}")
 
 
 st.set_page_config(page_title="Gas Spread Strategy Dashboard", layout="wide")
@@ -127,19 +188,22 @@ raw_prices, normalized_prices = load_base()
 spreads = build_spreads(normalized_prices, shipping_cost=shipping_cost)
 spreads.to_csv(PROCESSED_DIR / "spreads.csv")
 
-st.write("Shipping:", shipping_cost)
-st.write("Last netback:", float(spreads["TTF_JKM_netback"].dropna().iloc[-1]))
+selected_series = spreads[selected_spread].dropna()
 
-spread_series = spreads[selected_spread].dropna()
-
-if refit_on_shipping:
-    calibration_spread = spread_series
+if selected_spread == "TTF_JKM_netback":
+    st.markdown(f"**Shipping:** `{shipping_cost:.2f}`")
+    st.markdown(f"**Last netback:** `{selected_series.iloc[-1]:.4f}`")
 else:
-    baseline_spreads = build_spreads(normalized_prices, shipping_cost=BASELINE_SHIPPING)
-    calibration_spread = baseline_spreads[selected_spread].dropna()
+    st.markdown(f"**Last spread:** `{selected_series.iloc[-1]:.4f}`")
 
-min_date = spread_series.index.min().date()
-max_date = spread_series.index.max().date()
+if selected_spread == "TTF_JKM_netback" and not refit_on_shipping:
+    baseline_spreads = build_spreads(normalized_prices, shipping_cost=BASELINE_SHIPPING)
+    model_series = baseline_spreads[selected_spread].dropna()
+else:
+    model_series = selected_series
+
+min_date = selected_series.index.min().date()
+max_date = selected_series.index.max().date()
 
 default_train_end = pd.Timestamp("2019-12-31").date()
 if default_train_end < min_date or default_train_end > max_date:
@@ -157,11 +221,9 @@ if model_mode == "Train/Test (fixed params)":
 else:
     train_end = None
 
-cost_per_turnover = float(transaction_cost) + (2 * float(per_leg_cost))
-
 if model_mode == "Train/Test (fixed params)":
-    train = calibration_spread.loc[:train_end]
-    test = spread_series.loc[train_end:]
+    train = model_series.loc[:train_end]
+    test = selected_series.loc[train_end:]
 
     if train.empty or test.empty:
         st.warning("Train/test split leaves no data on one side. Adjust the date.")
@@ -171,7 +233,7 @@ if model_mode == "Train/Test (fixed params)":
     signal, zscores = generate_signal(
         spread=test,
         mu=ar1_params["mu"],
-        sigma=ar1_params["sigma"],
+        sigma=ar1_params["sigma_x"],
         entry_z=entry_z,
         exit_z=exit_z,
     )
@@ -179,30 +241,36 @@ if model_mode == "Train/Test (fixed params)":
     zscores_for_plot = zscores
     params_table = format_parameters(ar1_params)
 else:
-    rolling_params = rolling_ar1_params(calibration_spread, lookback=lookback_days)
+    rolling_params = rolling_ar1_params(model_series, lookback=lookback_days)
     if rolling_params.dropna().empty:
         st.warning("Rolling window is longer than available data. Reduce the lookback.")
         st.stop()
     mu_series = rolling_params["mu"]
-    sigma_series = rolling_params["sigma"]
-    zscores = (spread_series - mu_series) / sigma_series
+    sigma_series = rolling_params["sigma_x"]
+    zscores = (selected_series - mu_series) / sigma_series
     signal = signal_from_zscores(zscores, entry_z=entry_z, exit_z=exit_z)
-    spread_for_backtest = spread_series
+    spread_for_backtest = selected_series
     zscores_for_plot = zscores
     latest_params = rolling_params.dropna().iloc[-1]
     params_table = pd.DataFrame(
         {
             "Value": {
-                "Constant": latest_params["const"],
+                "Constant": latest_params["constant"],
                 "Phi": latest_params["phi"],
                 "Long-run mean": latest_params["mu"],
-                "Residual sigma": latest_params["sigma"],
+                "Residual sigma (σₑ)": latest_params["sigma_eps"],
+                "Stationary sigma (σₓ)": latest_params["sigma_x"],
                 "Half-life (days)": half_life(latest_params["phi"]),
             }
         }
     )
 
-backtest = backtest_spread(spread_for_backtest, signal, cost_per_turnover=cost_per_turnover)
+backtest = backtest_spread(
+    spread_for_backtest,
+    signal,
+    cost_per_turnover=float(transaction_cost),
+    per_leg_cost=float(per_leg_cost),
+)
 
 summary_tab, sweep_tab = st.tabs(["Overview", "Parameter sweep"])
 
@@ -210,7 +278,7 @@ with summary_tab:
     col1, col2 = st.columns([3, 1])
     with col1:
         st.subheader(f"{selected_spread} spread")
-        st.line_chart(spread_series, height=280)
+        st.line_chart(selected_series, height=280)
     with col2:
         st.subheader("AR(1) estimates")
         st.dataframe(params_table, use_container_width=True)
@@ -269,22 +337,21 @@ with sweep_tab:
     sweep_rows = []
     for entry in entry_grid:
         for exit_value in exit_grid:
-            if model_mode == "Train/Test (fixed params)":
-                signal_sweep, _ = generate_signal(
-                    spread=spread_for_backtest,
-                    mu=ar1_params["mu"],
-                    sigma=ar1_params["sigma"],
-                    entry_z=entry,
-                    exit_z=exit_value,
-                )
-            else:
-                signal_sweep = signal_from_zscores(zscores_for_plot, entry_z=entry, exit_z=exit_value)
-            bt = backtest_spread(
-                spread_for_backtest,
-                signal_sweep,
-                cost_per_turnover=cost_per_turnover,
+            metrics = run_one_config(
+                spread_key=selected_spread,
+                mode=model_mode,
+                entry_z=entry,
+                exit_z=exit_value,
+                shipping_cost=shipping_cost,
+                refit_model=refit_on_shipping,
+                train_end=train_end,
+                lookback=lookback_days,
+                transaction_cost=float(transaction_cost),
+                per_leg_cost=float(per_leg_cost),
+                normalized_prices=normalized_prices,
             )
-            metrics = summarize_backtest(bt, name=f"{entry}/{exit_value}")
+            if metrics is None:
+                continue
             sweep_rows.append(
                 {
                     "entry_z": entry,

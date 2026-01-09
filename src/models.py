@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import statsmodels.api as sm
 
 
 def half_life(phi: float) -> float:
@@ -29,45 +28,45 @@ def half_life(phi: float) -> float:
     return np.log(2) / -np.log(phi)
 
 
-def fit_ar1(spread: pd.Series) -> dict:
+def fit_ar1(series: pd.Series) -> dict:
     """Fit an AR(1) model ``S_t = c + phi * S_{t-1}`` to a spread series.
 
-    The function removes missing values, constructs the lagged regressor, and
-    estimates parameters via ordinary least squares using ``statsmodels``.
-
     Args:
-        spread: Time series of spread levels.
+        series: Time series of spread levels.
 
     Returns:
-        A dictionary containing ``const`` (c), ``phi``, ``mu`` (long-run mean),
-        ``sigma`` (standard deviation of residuals), and the fitted ``model``
-        object.
-
-    Raises:
-        ValueError: If fewer than two observations remain after dropping NaNs.
+        A dictionary containing ``constant`` (c), ``phi``, ``mu`` (long-run mean),
+        ``sigma_eps`` (residual standard deviation), ``sigma_x`` (stationary
+        standard deviation), and ``half_life_days``.
     """
 
-    cleaned = spread.dropna()
+    cleaned = series.dropna().astype(float)
     if len(cleaned) < 2:
         raise ValueError("At least two observations are required to fit AR(1) after dropping NaNs.")
 
-    y = cleaned.iloc[1:]
-    x = sm.add_constant(cleaned.shift(1).iloc[1:])
+    x = cleaned.shift(1).dropna()
+    y = cleaned.loc[x.index]
 
-    model = sm.OLS(y, x).fit()
+    x_mean, y_mean = x.mean(), y.mean()
+    phi = ((x - x_mean) * (y - y_mean)).sum() / ((x - x_mean) ** 2).sum()
+    constant = y_mean - phi * x_mean
 
-    const = model.params.get("const", model.params.iloc[0])
-    phi = model.params.drop("const", errors="ignore").iloc[0]
+    resid = y - (constant + phi * x)
+    sigma_eps = resid.std(ddof=1)
 
-    mu = const / (1 - phi) if phi != 1 else np.inf
-    sigma = float(np.sqrt(model.mse_resid))
+    mu = constant / (1 - phi) if abs(1 - phi) > 1e-12 else np.nan
+    denom = max(1e-12, 1 - phi**2)
+    sigma_x = sigma_eps / np.sqrt(denom)
+
+    half_life_days = (-np.log(2) / np.log(abs(phi))) if 0 < abs(phi) < 1 else np.nan
 
     return {
-        "const": const,
+        "constant": constant,
         "phi": phi,
         "mu": mu,
-        "sigma": sigma,
-        "model": model,
+        "sigma_eps": float(sigma_eps),
+        "sigma_x": float(sigma_x),
+        "half_life_days": float(half_life_days),
     }
 
 
@@ -79,12 +78,17 @@ def rolling_ar1_params(spread: pd.Series, lookback: int = 252) -> pd.DataFrame:
         lookback: Number of historical observations to use for each fit.
 
     Returns:
-        DataFrame with columns ``const``, ``phi``, ``mu``, and ``sigma`` aligned
-        to the input index. Values are NaN until enough history is available.
+        DataFrame with columns ``constant``, ``phi``, ``mu``, ``sigma_eps``, and
+        ``sigma_x`` aligned to the input index. Values are NaN until enough
+        history is available.
     """
 
     cleaned = spread.dropna()
-    params = pd.DataFrame(index=cleaned.index, columns=["const", "phi", "mu", "sigma"], dtype=float)
+    params = pd.DataFrame(
+        index=cleaned.index,
+        columns=["constant", "phi", "mu", "sigma_eps", "sigma_x"],
+        dtype=float,
+    )
 
     values = cleaned.to_numpy()
     for idx in range(lookback, len(cleaned)):
@@ -103,8 +107,10 @@ def rolling_ar1_params(spread: pd.Series, lookback: int = 252) -> pd.DataFrame:
         const = float(y.mean() - phi * x.mean())
         mu = const / (1 - phi) if phi != 1 else np.nan
         residuals = y - (const + phi * x)
-        sigma = float(np.std(residuals, ddof=0))
+        sigma_eps = float(np.std(residuals, ddof=1))
+        denom = max(1e-12, 1 - phi**2)
+        sigma_x = sigma_eps / np.sqrt(denom)
 
-        params.iloc[idx] = [const, phi, mu, sigma]
+        params.iloc[idx] = [const, phi, mu, sigma_eps, sigma_x]
 
     return params.reindex(spread.index)
