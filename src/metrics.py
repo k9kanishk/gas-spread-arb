@@ -70,7 +70,7 @@ def summarize_backtest(bt: pd.DataFrame, name: str) -> pd.Series:
     Parameters
     ----------
     bt : pd.DataFrame
-        Backtest output, expected to contain ``signal``, ``net_pnl``, and
+        Backtest output, expected to contain ``signal``, ``pnl``, and
         ``equity`` columns.
     name : str
         Name for the strategy or spread.
@@ -83,18 +83,18 @@ def summarize_backtest(bt: pd.DataFrame, name: str) -> pd.Series:
     """
 
     signal = bt["signal"]
-    net_pnl = bt["net_pnl"]
+    pnl = bt["pnl"]
     equity = bt["equity"]
 
     summary = pd.Series(dtype=float, name=name)
-    summary.loc["sharpe"] = sharpe(net_pnl)
+    summary.loc["sharpe"] = sharpe(pnl)
     summary.loc["max_drawdown"] = max_drawdown(equity)
-    summary.loc["total_pnl"] = float(net_pnl.sum())
+    summary.loc["total_pnl"] = float(pnl.sum())
 
     signal_change = signal.diff().fillna(signal)
     summary.loc["trades"] = float(signal_change.ne(0).sum())
 
-    non_zero_pnl = net_pnl[net_pnl != 0]
+    non_zero_pnl = pnl[pnl != 0]
     if non_zero_pnl.empty:
         win_ratio: float | np.floating[Any] = float("nan")
     else:

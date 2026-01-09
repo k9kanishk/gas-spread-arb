@@ -9,6 +9,7 @@ def backtest_spread(
     spread: pd.Series,
     signal: pd.Series,
     cost_per_turnover: float = 0.0,
+    per_leg_cost: float = 0.0,
 ) -> pd.DataFrame:
     """
     Backtest a simple spread strategy.
@@ -23,42 +24,43 @@ def backtest_spread(
     signal : pd.Series
         Desired position at each time (0 for flat, +1 for long, -1 for short).
     cost_per_turnover : float, default 0.0
-        Absolute transaction cost applied whenever the position changes.
+        Absolute transaction cost applied per unit of turnover.
+    per_leg_cost : float, default 0.0
+        Optional per-leg cost applied to turnover (two legs per spread).
 
     Returns
     -------
     pd.DataFrame
         A DataFrame containing spread, signal, realized position, gross and net
         PnL components, and the equity curve. The columns include:
-        ``spread``, ``signal``, ``position``, ``gross_pnl``, ``costs``,
-        ``net_pnl``, and ``equity``.
+        ``spread``, ``signal``, ``position``, ``dS``, ``gross_pnl``, ``costs``,
+        ``pnl``, and ``equity``.
     """
 
-    # Align inputs to ensure consistent indices.
-    spread_aligned, signal_aligned = spread.align(signal, join="inner")
+    s = spread.dropna().astype(float)
+    sig = signal.reindex(s.index).fillna(0.0).astype(float)
 
-    d_spread = spread_aligned.diff().fillna(0.0)
-
-    # Yesterday's signal determines today's position.
-    position = signal_aligned.shift(1).fillna(0.0)
-
+    position = sig.shift(1).fillna(0.0)
+    d_spread = s.diff().fillna(0.0)
     gross_pnl = position * d_spread
 
-    signal_change = signal_aligned.diff().fillna(signal_aligned)
-    turnover_events = signal_change.ne(0)
-    costs = turnover_events.astype(float) * float(cost_per_turnover)
+    turnover = position.diff().abs().fillna(0.0)
+    costs = float(cost_per_turnover) * turnover
+    if per_leg_cost > 0:
+        costs += 2.0 * float(per_leg_cost) * turnover
 
-    net_pnl = gross_pnl - costs
-    equity = net_pnl.cumsum()
+    pnl = gross_pnl - costs
+    equity = pnl.cumsum()
 
     return pd.DataFrame(
         {
-            "spread": spread_aligned,
-            "signal": signal_aligned,
+            "spread": s,
+            "signal": sig,
             "position": position,
+            "dS": d_spread,
             "gross_pnl": gross_pnl,
             "costs": costs,
-            "net_pnl": net_pnl,
+            "pnl": pnl,
             "equity": equity,
         }
     )
